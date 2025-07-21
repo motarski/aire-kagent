@@ -21,6 +21,7 @@ APP_MANIFEST="02_demo_app/02_deployment_app.yaml"
 GRAFANA_VALUES="03_monitoring/grafana_values.yaml"
 GRAFANA_INGRESS="03_monitoring/grafana_ingress.yaml"
 ARGOCD_NAMESPACE="argocd"
+ARGOCD_OBJECTS="06_argocd/argo-cd.yaml"
 ARGOCD_MANIFEST="https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
 
 # 0. Install Ollama (local LLM provider)
@@ -160,6 +161,9 @@ kubectl apply -n "$ARGOCD_NAMESPACE" -f "$ARGOCD_MANIFEST"
 echo -e "${YELLOW}Waiting for ArgoCD server to be ready...${NC}"
 kubectl wait --namespace "$ARGOCD_NAMESPACE" --for=condition=Ready pod -l app.kubernetes.io/name=argocd-server --timeout=180s
 
+echo -e "${BLUE}Applying ArgoCD Application manifest...${NC}"
+kubectl apply -f "$ARGOCD_OBJECTS"
+
 echo -e "${GREEN}Exposing ArgoCD server on localhost:8080...${NC}"
 kubectl port-forward svc/argocd-server -n "$ARGOCD_NAMESPACE" 8080:443 &
 
@@ -170,5 +174,3 @@ echo -e "To access kagent's API from your host, run: ${BLUE}kubectl port-forward
 echo -e "${YELLOW}Then open: http://localhost:8083/ in your browser${NC}"
 echo -e "To access ArgoCD, open: http://localhost:8080/ in your browser"
 
-echo -e "${BLUE}Applying ArgoCD Application manifest...${NC}"
-kubectl apply -f 06_argocd/argo-cd.yaml
