@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-toolkit
+  namespace: demo-app
+  labels:
+    app: devops-toolkit
+spec:
+  selector:
+    matchLabels:
+      app: devops-toolkit
+  template:
+    metadata:
+      labels:
+        app: devops-toolkit
+    spec:
+      containers:
+      - name: devops-toolkit
+        image: vfarcic/devops-toolkit-series
+        ports:
+        - containerPort: 80
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+        resources:
+          limits:
+            cpu: 100m
+            memory: 256Mi
+          requests:
+            cpu: 80m
+            memory: 128Mi
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devops-toolkit
+  namespace: demo-app
+  annotations:
+    ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: ImplementationSpecific
+        backend:
+          service:
+           name: devops-toolkit
+           port:
+             number: 80
+    # host: dev.devops-toolkit.192.168.64.199.xip.io
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-toolkit
+  namespace: demo-app
+  labels:
+    app: devops-toolkit
+spec:
+  type: NodePort
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+    protocol: TCP
+    name: http
+  selector:
+    app: devops-toolkit

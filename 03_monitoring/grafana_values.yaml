@@ -1,0 +1,18 @@
+adminPassword: admin
+grafana.ini:
+  server:
+    root_url: http://localhost:31755/grafana
+    serve_from_sub_path: true
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        url: http://prometheus-server.monitoring.svc.cluster.local
+        access: proxy
+        isDefault: true
+
+service:
+  type: ClusterIP
