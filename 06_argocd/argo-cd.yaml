@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: demo-app
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/motarski/aire-kagent.git'
+    targetRevision: main
+    path: 02_demo_app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd-server-ingress
+  namespace: argocd
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /argocd
+        pathType: Prefix
+        backend:
+          service:
+            name: argocd-server
+            port:
+              number: 443

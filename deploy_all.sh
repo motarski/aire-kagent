@@ -20,6 +20,8 @@ INGRESS_MANIFEST="https://raw.githubusercontent.com/kubernetes/ingress-nginx/mas
 APP_MANIFEST="02_demo_app/02_deployment_app.yaml"
 GRAFANA_VALUES="03_monitoring/grafana_values.yaml"
 GRAFANA_INGRESS="03_monitoring/grafana_ingress.yaml"
+ARGOCD_NAMESPACE="argocd"
+ARGOCD_MANIFEST="https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
 
 # 0. Install Ollama (local LLM provider)
 echo -e "${BLUE}Installing Ollama (local LLM provider)...${NC}"
@@ -148,8 +150,25 @@ kubectl wait --namespace demo-app --for=condition=Ready pod/ollama-test --timeou
 echo -e "${GREEN}Running test query to Ollama from inside the Kind cluster...${NC}"
 kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d '{"model": "mistral:7b", "prompt": "What is the capital of Sweden?"}' | jq -r 'select(.done==true) | .response'
 
+# 18. Install ArgoCD
+echo -e "${BLUE}Creating ArgoCD namespace...${NC}"
+kubectl create namespace "$ARGOCD_NAMESPACE" || true
+
+echo -e "${BLUE}Installing ArgoCD...${NC}"
+kubectl apply -n "$ARGOCD_NAMESPACE" -f "$ARGOCD_MANIFEST"
+
+echo -e "${YELLOW}Waiting for ArgoCD server to be ready...${NC}"
+kubectl wait --namespace "$ARGOCD_NAMESPACE" --for=condition=Ready pod -l app.kubernetes.io/name=argocd-server --timeout=180s
+
+echo -e "${GREEN}Exposing ArgoCD server on localhost:8080...${NC}"
+kubectl port-forward svc/argocd-server -n "$ARGOCD_NAMESPACE" 8080:443 &
+
 echo -e "${GREEN}All done!${NC}"
 echo -e "${YELLOW}You can access your app at: http://localhost:31755/${NC}"
 echo -e "${YELLOW}You can access Grafana at: http://localhost:31755/grafana (admin/admin)${NC}"
 echo -e "To access kagent's API from your host, run: ${BLUE}kubectl port-forward -n kagent svc/kagent 8083:80${NC}"
 echo -e "${YELLOW}Then open: http://localhost:8083/ in your browser${NC}"
+echo -e "To access ArgoCD, open: http://localhost:8080/ in your browser"
+
+echo -e "${BLUE}Applying ArgoCD Application manifest...${NC}"
+kubectl apply -f 06_argocd/argo-cd.yaml

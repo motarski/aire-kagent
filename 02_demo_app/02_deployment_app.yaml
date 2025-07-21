@@ -1,50 +1,529 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-v1
+  namespace: demo-app
+  labels:
+    app: backend
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: backend
+    version: v1
+  type: ClusterIP
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: devops-toolkit
+  name: backend-v1
   namespace: demo-app
   labels:
-    app: devops-toolkit
+    app: backend
+    version: v1
 spec:
+  replicas: 1
   selector:
     matchLabels:
-      app: devops-toolkit
+      app: backend
+      version: v1
   template:
     metadata:
       labels:
-        app: devops-toolkit
+        app: backend
+        version: v1
     spec:
       containers:
-      - name: devops-toolkit
-        image: vfarcic/devops-toolkit-series
+      - name: backend
+        image: nicholasjackson/fake-service:v0.26.2
         ports:
-        - containerPort: 80
+          - name: http
+            containerPort: 8080
+            protocol: TCP
         livenessProbe:
-          httpGet:
-            path: /
-            port: 80
+          tcpSocket:
+            port: http
         readinessProbe:
-          httpGet:
-            path: /
-            port: 80
-        resources:
-          limits:
-            cpu: 100m
-            memory: 256Mi
-          requests:
-            cpu: 80m
-            memory: 128Mi
+          tcpSocket:
+            port: http
+        env:
+        - name: "LISTEN_ADDR"
+          value: "0.0.0.0:8080"
+        - name: "NAME"
+          value: "backend-v1"
+        - name: "MESSAGE"
+          value: "Hello From backend (v1)!"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-v2
+  namespace: demo-app
+  labels:
+    app: backend
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: backend
+    version: v2
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-v2
+  namespace: demo-app
+  labels:
+    app: backend
+    version: v2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: v2
+    spec:
+      containers:
+      - name: backend
+        image: nicholasjackson/fake-service:v0.26.2
+        ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: http
+        readinessProbe:
+          tcpSocket:
+            port: http
+        env:
+        - name: "LISTEN_ADDR"
+          value: "0.0.0.0:8080"
+        - name: "NAME"
+          value: "backend-v2"
+        - name: "MESSAGE"
+          value: "Hello From backend (v2)!"
+        - name: "UPSTREAM_URIS"
+          value: "http://neo4j-db-v1:7474"
+---
+apiVersion: v1
+data:
+  index.js: |-
+    const express = require('express');
+    const mysql = require('mysql2/promise');
+    const app = express();
 
+    const pool = mysql.createPool({
+      host: process.env.MYSQL_HOST,
+      user: process.env.MYSQL_USER,
+      password: process.env.MYSQL_PASSWORD,
+      database: process.env.MYSQL_DATABASE,
+      waitForConnections: true,
+    });
+
+    // Initialize database and table
+    async function initDB() {
+      try {
+        const connection = await pool.getConnection();
+        await connection.execute('CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTO_INCREMENT, message VARCHAR(255), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP) ENGINE=InnoDB;');
+        await connection.execute("INSERT INTO messages (message) VALUES ('Hello from backend-v3!')");
+        connection.release();
+      } catch (err) {
+        console.error('Database initialization error:', err);
+        process.exit(1);
+      }
+    }
+
+    // Initialize DB on startup
+    initDB();
+    console.log('Database initialized');
+
+    app.get('/', async (req, res) => {
+      try {
+        console.log(`Received request: ${req.method} ${req.url}`);
+        await initDB();
+        const [rows] = await pool.execute('SELECT * FROM messages ORDER BY created_at DESC LIMIT 1');
+        res.json({
+          service: "backend-v3",
+          database: "connected",
+          lastMessage: rows[0]
+        });
+      } catch (err) {
+        res.status(500).json({
+          service: "backend-v3",
+          database: "error",
+          error: err.message
+        });
+      }
+    });
+
+    app.listen(8080, () => {
+      console.log("backend v3 listening at http://localhost:8080");
+    });
+kind: ConfigMap
+metadata:
+  name: backend-v3-code
+  namespace: demo-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-v3
+  namespace: demo-app
+  labels:
+    app: backend
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: backend
+    version: v3
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secrets
+  namespace: demo-app
+type: Opaque
+stringData:
+  MYSQL_HOST: mysql-v1
+  MYSQL_USER: root
+  MYSQL_PASSWORD: password
+  MYSQL_DATABASE: demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-v3
+  namespace: demo-app
+  labels:
+    app: backend
+    version: v3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+      version: v3
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: v3
+    spec:
+      containers:
+      - name: backend
+        image: node:23-alpine
+        ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: http
+        readinessProbe:
+          tcpSocket:
+            port: http
+        volumeMounts:
+        - name: backend-v3-code
+          mountPath: /app/index.js
+          subPath: index.js
+        command: ["/bin/sh"]
+        args:
+        - -c
+        - |
+          apk add --no-cache nodejs npm mysql-client
+          cd /app
+          npm init -y
+          npm install express mysql2
+          node index.js
+        envFrom:
+        - secretRef:
+            name: mysql-secrets
+      volumes:
+      - name: backend-v3-code
+        configMap:
+          name: backend-v3-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-v1
+  namespace: demo-app
+  labels:
+    app: frontend
+spec:
+  ports:
+  - port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: frontend
+    version: v1
+  type: NodePort
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend-v1
+  namespace: demo-app
+  labels:
+    app: frontend
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: frontend
+        version: v1
+    spec:
+      containers:
+      - name: frontend
+        image: nicholasjackson/fake-service:v0.26.2
+        ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: http
+        readinessProbe:
+          tcpSocket:
+            port: http
+        env:
+        - name: "LISTEN_ADDR"
+          value: "0.0.0.0:8080"
+        - name: "NAME"
+          value: "frontend-v1"
+        - name: "MESSAGE"
+          value: "Hello From frontend (v1)!"
+        - name: "UPSTREAM_URIS"
+          value: "backend-v1:8080,http://backend-v2:8080,http://backend-v3:8080"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-v1
+  namespace: demo-app
+  labels:
+    app: mysql
+spec:
+  ports:
+  - port: 3306
+    protocol: TCP
+    targetPort: 3306
+  selector:
+    app: mysql
+    version: v1
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: demo-app
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: standard
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-v1
+  namespace: demo-app
+  labels:
+    app: mysql
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: mysql
+        version: v1
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:9.2.0
+        ports:
+          - name: http
+            containerPort: 3306
+            protocol: TCP
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+        livenessProbe:
+          tcpSocket:
+            port: http
+        readinessProbe:
+          tcpSocket:
+            port: http
+        env:
+        - name: "MYSQL_ROOT_PASSWORD"
+          value: "password"
+        - name: "MYSQL_DATABASE"
+          value: "demo"
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: mysql-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: neo4j-db-v1
+  namespace: demo-app
+  labels:
+    app: neo4j-db
+spec:
+  ports:
+  - port: 7474
+    protocol: TCP
+    targetPort: 7474
+  selector:
+    app: neo4j-db
+    version: v1
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: neo4j-db-v1
+  namespace: demo-app
+  labels:
+    app: neo4j-db
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: neo4j-db
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: neo4j-db
+        version: v1
+    spec:
+      containers:
+      - name: neo4j-db
+        image: bitnami/neo4j:5.26.1
+        ports:
+          - name: http
+            containerPort: 7474
+            protocol: TCP
+        livenessProbe:
+          tcpSocket:
+            port: http
+        readinessProbe:
+          tcpSocket:
+            port: http
+        env:
+        - name: "NEO4J_PASSWORD"
+          value: "password"
+# Copyright Istio Authors
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+
+##################################################################################################
+# Sleep service
+##################################################################################################
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sleep
+  namespace: demo-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sleep
+  namespace: demo-app
+  labels:
+    app: sleep
+    service: sleep
+spec:
+  ports:
+  - port: 80
+    name: http
+  selector:
+    app: sleep
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sleep
+  namespace: demo-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sleep
+  template:
+    metadata:
+      labels:
+        app: sleep
+    spec:
+      terminationGracePeriodSeconds: 0
+      serviceAccountName: sleep
+      containers:
+      - name: sleep
+        image: curlimages/curl
+        command: ["/bin/sleep", "infinity"]
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - mountPath: /etc/sleep/tls
+          name: secret-volume
+      volumes:
+      - name: secret-volume
+        secret:
+          secretName: sleep-secret
+          optional: true
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: devops-toolkit
+  name: frontend-v1-ingress
   namespace: demo-app
   annotations:
-    ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
-    ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: nginx
@@ -55,26 +534,6 @@ spec:
         pathType: ImplementationSpecific
         backend:
           service:
-           name: devops-toolkit
-           port:
-             number: 80
-    # host: dev.devops-toolkit.192.168.64.199.xip.io
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: devops-toolkit
-  namespace: demo-app
-  labels:
-    app: devops-toolkit
-spec:
-  type: NodePort
-  ports:
-  - port: 80
-    targetPort: 80
-    nodePort: 30080
-    protocol: TCP
-    name: http
-  selector:
-    app: devops-toolkit
+            name: frontend-v1
+            port:
+              number: 8080
