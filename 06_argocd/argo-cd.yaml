@@ -2,13 +2,13 @@ apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
   name: demo-app
-  namespace: argocd
+  namespace: argo-cd
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/motarski/aire-kagent.git'
+    repoURL: 'https://github.com/motarski/demo-app.git'
     targetRevision: main
-    path: 02_demo_app
+    path: .
   destination:
     server: https://kubernetes.default.svc
     namespace: demo-app
@@ -21,7 +21,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: argocd-server-ingress
-  namespace: argocd
+  namespace: argo-cd
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/backend-protocol: "HTTPS"
