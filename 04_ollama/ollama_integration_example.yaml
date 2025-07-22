@@ -1,6 +1,6 @@
 llm:
   provider: ollama
   endpoint: http://localhost:11434/v1
-  model: mistral:7b
+  model: llama3.1:8b
   # Optional: API key if needed (Ollama does not require by default)
   # api_key: ""

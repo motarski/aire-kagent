@@ -2,7 +2,7 @@ providers:
   default: ollama
   ollama:
     provider: Ollama
-    model: "mistral:7b"
+    model: "llama3.1:8b"
     config:
       host: host.docker.internal:11434
 

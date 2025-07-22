@@ -13,6 +13,7 @@ NC='\033[0m'
 
 # Variables
 CLUSTER_NAME="aire-poc"
+OLLAMA_MODEL="llama3.1:8b"  # Updated model to Llama 3.1 8B
 DEMO_APP_NAMESPACE="demo-app"
 MONITORING_NAMESPACE="monitoring"
 KIND_CONFIG="01_multi_node_cluster/01_multi_node_cluster.yaml"
@@ -40,12 +41,12 @@ if lsof -i :11434 | grep LISTEN; then
   echo "Ollama server is already running on port 11434."
 else
   echo -e "${YELLOW}Starting Ollama server on 0.0.0.0...${NC}"
-  ollama serve --host 0.0.0.0 &
+  ollama serve &
   sleep 5
 fi
 
-echo -e "${GREEN}Pulling mistral:7b model with Ollama...${NC}"
-ollama pull mistral:7b
+echo -e "${GREEN}Pulling the model with Ollama...${NC}"
+ollama pull ${OLLAMA_MODEL}
 
 # 1. Delete existing cluster (if any)
 echo -e "${BLUE}Deleting existing Kind cluster (if any)...${NC}"
@@ -73,9 +74,9 @@ echo -e "${YELLOW}Waiting for service patch to take effect...${NC}"
 sleep 5
 
 # 7. Deploy demo-app (namespace, deployment, service, ingress)
-echo -e "${BLUE}Deploying demo-app...${NC}"
+# echo -e "${BLUE}Deploying demo-app...${NC}"
 kubectl create namespace "$DEMO_APP_NAMESPACE" || true
-kubectl apply -f "$APP_MANIFEST"
+# kubectl apply -f "$APP_MANIFEST"
 
 # 8. Create monitoring namespace
 echo -e "${BLUE}Creating monitoring namespace...${NC}"
@@ -133,7 +134,11 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 EOF
 
-# 16. Install kagent with Ollama provider
+# # 16. Create OpenAI API key secret with dummy value for the tools-server
+# echo -e "${GREEN}Creating OpenAI API key secret with dummy value...${NC}"
+# kubectl create secret generic kagent-openai -n "$KAGENT_NAMESPACE" --from-literal=OPENAI_API_KEY=dummy-value-for-tools-server --dry-run=client -o yaml | kubectl apply -f -
+
+# 17. Install kagent with Ollama provider
 echo -e "${GREEN}Installing kagent with Ollama provider...${NC}"
 helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
   --namespace "$KAGENT_NAMESPACE" \
@@ -141,7 +146,7 @@ helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
 
 echo "Kagent installed in namespace $KAGENT_NAMESPACE with Ollama provider."
 
-# 17. Deploy ollama-test-pod to demo-app namespace
+# 18. Deploy ollama-test-pod to demo-app namespace
 OLLAMA_TEST_POD="04_ollama/ollama_test_pod.yaml"
 echo -e "${BLUE}Deploying ollama test pod for connectivity test...${NC}"
 kubectl apply -f "$OLLAMA_TEST_POD"
@@ -149,28 +154,32 @@ echo -e "${YELLOW}Waiting for ollama test pod to be ready...${NC}"
 kubectl wait --namespace demo-app --for=condition=Ready pod/ollama-test --timeout=60s
 
 echo -e "${GREEN}Running test query to Ollama from inside the Kind cluster...${NC}"
-kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d '{"model": "mistral:7b", "prompt": "What is the capital of Sweden?"}' | jq -r 'select(.done==true) | .response'
+kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d '{"model": "llama3.1:8b", "prompt": "What is the capital of Sweden?"}' | jq -r 'select(.done==true) | .response'
 
-# 18. Install ArgoCD
+# 19. Install ArgoCD
 echo -e "${BLUE}Creating ArgoCD namespace...${NC}"
 kubectl create namespace "$ARGOCD_NAMESPACE" || true
 
 echo -e "${BLUE}Installing ArgoCD...${NC}"
 kubectl apply -n "$ARGOCD_NAMESPACE" -f "$ARGOCD_MANIFEST"
 
-echo -e "${YELLOW}Waiting for ArgoCD server to be ready...${NC}"
-kubectl wait --namespace "$ARGOCD_NAMESPACE" --for=condition=Ready pod -l app.kubernetes.io/name=argocd-server --timeout=180s
+echo -e "${YELLOW}Waiting for pods to be ready...${NC}"
+kubectl wait --namespace "$ARGOCD_NAMESPACE" --for=condition=Ready pod -l 'app.kubernetes.io/name=argocd-server' --timeout=180s
+kubectl wait --namespace "$KAGENT_NAMESPACE" --for=condition=Ready pod -l 'app.kubernetes.io/name=kagent' --timeout=180s
 
+# 20. Apply ArgoCD Application manifest
 echo -e "${BLUE}Applying ArgoCD Application manifest...${NC}"
 kubectl apply -f "$ARGOCD_OBJECTS"
+ARGOCD_PASS=$(kubectl -n "$ARGOCD_NAMESPACE" get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 --decode)
 
-echo -e "${GREEN}Exposing ArgoCD server on localhost:8080...${NC}"
+echo -e "${GREEN}Exposing services...${NC}"
+kubectl wait --namespace "$KAGENT_NAMESPACE" --for=condition=Ready pod -l 'app.kubernetes.io/name=kagent' --timeout=180s
 kubectl port-forward svc/argocd-server -n "$ARGOCD_NAMESPACE" 8080:443 &
+kubectl port-forward svc/kagent -n "$KAGENT_NAMESPACE" 8083:80 &
 
 echo -e "${GREEN}All done!${NC}"
-echo -e "${YELLOW}You can access your app at: http://localhost:31755/${NC}"
-echo -e "${YELLOW}You can access Grafana at: http://localhost:31755/grafana (admin/admin)${NC}"
-echo -e "To access kagent's API from your host, run: ${BLUE}kubectl port-forward -n kagent svc/kagent 8083:80${NC}"
-echo -e "${YELLOW}Then open: http://localhost:8083/ in your browser${NC}"
-echo -e "To access ArgoCD, open: http://localhost:8080/ in your browser"
-
+echo -e "You can access your app at: ${YELLOW}http://localhost:31755/ui${NC}"
+echo -e "You can access Grafana at: ${YELLOW}http://localhost:31755/grafana (admin/admin)${NC}"
+echo -e "You can access kagent at: ${YELLOW}http://localhost:8083/${NC}"
+echo -e "You can access ArgoCD at: ${YELLOW}http://localhost:8080/${NC}"
+echo -e "ArgoCD admin password is: ${YELLOW}${ARGOCD_PASS}${NC}"

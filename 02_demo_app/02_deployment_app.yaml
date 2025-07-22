@@ -1,3 +1,6 @@
+# NOTE: Demo App deployement is controlled by ArgoCD connected to a github repository containing these manifests. 
+# They are here solely to understand what objects are being deployed
+
 apiVersion: v1
 kind: Service
 metadata:
