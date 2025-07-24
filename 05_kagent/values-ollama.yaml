@@ -2,9 +2,13 @@ providers:
   default: ollama
   ollama:
     provider: Ollama
-    model: "llama3.1:8b"
+    model: "llama3.1"
     config:
       host: host.docker.internal:11434
+
+# Add a dummy OpenAI API key for the tools-server
+# openAI:
+#   apiKey: "dummy-value-for-tools-server"
 
 k8s-agent:
   enabled: true
