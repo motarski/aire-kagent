@@ -13,8 +13,8 @@ NC='\033[0m'
 
 # Variables
 CLUSTER_NAME="aire-poc"
-LLM_PROVIDER=${LLM_PROVIDER:-ollama}  # Default to Ollama if not set
-LLM_MODEL=${LLM_MODEL:-llama3.1}  # Default to llama3.1 if not set
+LLM_PROVIDER="ollama"  # Using Ollama as the provider
+LLM_MODEL="llama3.1"   # Using llama3.1 as the default model
 DEMO_APP_NAMESPACE="demo-app"
 MONITORING_NAMESPACE="monitoring"
 KAGENT_NAMESPACE="kagent"
@@ -27,45 +27,24 @@ ARGOCD_NAMESPACE="argocd"
 ARGOCD_OBJECTS="06_argocd/argo-cd.yaml"
 ARGOCD_MANIFEST="https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml"
 
-# 0. Install and configure LLM provider
-if [ "$LLM_PROVIDER" == "ollama" ]; then
-  echo -e "${BLUE}Installing Ollama (local LLM provider)...${NC}"
-  if ! command -v ollama &> /dev/null; then
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-      brew install ollama
-    else
-      echo "Please install Ollama manually for your OS: https://ollama.com/download"
-    fi
+# 0. Install and configure Ollama
+echo -e "${BLUE}Installing Ollama (local LLM provider)...${NC}"
+if ! command -v ollama &> /dev/null; then
+  brew install ollama
 else
-    echo "Ollama is already installed."
-  fi
-
-  if lsof -i :11434 | grep LISTEN; then
-    echo "Ollama server is already running on port 11434."
-  else
-    echo -e "${YELLOW}Starting Ollama server on 0.0.0.0...${NC}"
-    ollama serve &
-    sleep 5
-  fi
-
-  echo -e "${GREEN}Pulling the model with Ollama...${NC}"
-  ollama pull ${LLM_MODEL}
-elif [ "$LLM_PROVIDER" == "anthropic" ] || [ "$LLM_PROVIDER" == "openAI" ] || [ "$LLM_PROVIDER" == "azureOpenAI" ]; then
-  echo -e "${YELLOW}Using $LLM_PROVIDER as LLM provider with model $LLM_MODEL${NC}"
-  
-  # Check if API key is provided via environment variable
-  API_KEY_VAR="${LLM_PROVIDER^^}_API_KEY"
-  if [ -z "${!API_KEY_VAR}" ]; then
-    echo -e "${RED}Error: API key not set for $LLM_PROVIDER provider.${NC}"
-    echo -e "Please set the environment variable ${API_KEY_VAR} and try again."
-    exit 1
-  fi
-  echo -e "${GREEN}Found API key for $LLM_PROVIDER provider.${NC}"
-else
-  echo -e "${RED}Error: Unsupported LLM provider: $LLM_PROVIDER${NC}"
-  echo -e "Supported providers: ollama, anthropic, openAI, azureOpenAI"
-  exit 1
+  echo "Ollama is already installed."
 fi
+
+if lsof -i :11434 | grep LISTEN; then
+  echo "Ollama server is already running on port 11434."
+else
+  echo -e "${YELLOW}Starting Ollama server on 0.0.0.0...${NC}"
+  ollama serve &
+  sleep 5
+fi
+
+echo -e "${GREEN}Pulling the model with Ollama...${NC}"
+ollama pull ${LLM_MODEL}
 
 # 1. Delete existing cluster (if any)
 echo -e "${BLUE}Deleting existing Kind cluster (if any)...${NC}"
@@ -156,40 +135,8 @@ EOF
 # echo -e "${GREEN}Creating OpenAI API key secret with dummy value...${NC}"
 # kubectl create secret generic kagent-openai -n "$KAGENT_NAMESPACE" --from-literal=OPENAI_API_KEY=dummy-value-for-tools-server --dry-run=client -o yaml | kubectl apply -f -
 
-# 17. Install kagent with configured provider
-# Determine which values file to use
-if [ "$LLM_PROVIDER" == "ollama" ]; then
-  KAGENT_VALUES="05_kagent/values-ollama.yaml"
-else
-  # Check if a values file exists for this provider
-  if [ -f "05_kagent/values-${LLM_PROVIDER}.yaml" ]; then
-    KAGENT_VALUES="05_kagent/values-${LLM_PROVIDER}.yaml"
-  else
-    # Create a new values file for this provider
-    echo -e "${YELLOW}Creating values file for $LLM_PROVIDER provider...${NC}"
-    ./switch_provider.sh "$LLM_PROVIDER" "$LLM_MODEL" "${!API_KEY_VAR}"
-    KAGENT_VALUES="05_kagent/values-${LLM_PROVIDER}.yaml"
-  fi
-
-  # Create provider-specific API key secret
-  SECRET_NAME="kagent-$LLM_PROVIDER"
-  SECRET_KEY="${LLM_PROVIDER^^}_API_KEY"
-  
-  # Convert to uppercase for environment variable names
-  if [ "$LLM_PROVIDER" == "openAI" ]; then
-    SECRET_NAME="kagent-openai"
-    SECRET_KEY="OPENAI_API_KEY"
-  elif [ "$LLM_PROVIDER" == "azureOpenAI" ]; then
-    SECRET_NAME="kagent-azure-openai"
-    SECRET_KEY="AZUREOPENAI_API_KEY"
-  fi
-  
-  echo -e "${BLUE}Creating $LLM_PROVIDER API key secret...${NC}"
-  kubectl create secret generic "$SECRET_NAME" \
-    -n "$KAGENT_NAMESPACE" \
-    --from-literal="$SECRET_KEY=${!API_KEY_VAR}" \
-    --dry-run=client -o yaml | kubectl apply -f -
-fi
+# 17. Install kagent with Ollama provider
+KAGENT_VALUES="05_kagent/values-ollama.yaml"
 
 echo -e "${GREEN}Installing kagent with $LLM_PROVIDER provider...${NC}"
 helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
@@ -198,11 +145,10 @@ helm upgrade --install kagent oci://ghcr.io/kagent-dev/kagent/helm/kagent \
 
 echo "Kagent installed in namespace $KAGENT_NAMESPACE with $LLM_PROVIDER provider."
 
-# Create or update ModelConfig object for the provider
-echo -e "${BLUE}Creating ModelConfig for $LLM_PROVIDER provider...${NC}"
+# Create ModelConfig object for Ollama provider
+echo -e "${BLUE}Creating ModelConfig for Ollama provider...${NC}"
 
-if [ "$LLM_PROVIDER" == "ollama" ]; then
-  cat << EOF | kubectl apply -f -
+cat << EOF | kubectl apply -f -
 apiVersion: kagent.dev/v1alpha1
 kind: ModelConfig
 metadata:
@@ -214,67 +160,16 @@ spec:
     host: host.docker.internal:11434
   provider: Ollama
 EOF
-elif [ "$LLM_PROVIDER" == "anthropic" ]; then
-  cat << EOF | kubectl apply -f -
-apiVersion: kagent.dev/v1alpha1
-kind: ModelConfig
-metadata:
-  name: default-model-config
-  namespace: $KAGENT_NAMESPACE
-spec:
-  model: $LLM_MODEL
-  provider: Anthropic
-  anthropic:
-    apiKeySecretRef: kagent-anthropic
-    apiKeySecretKey: ANTHROPIC_API_KEY
-EOF
-elif [ "$LLM_PROVIDER" == "openAI" ]; then
-  cat << EOF | kubectl apply -f -
-apiVersion: kagent.dev/v1alpha1
-kind: ModelConfig
-metadata:
-  name: default-model-config
-  namespace: $KAGENT_NAMESPACE
-spec:
-  model: $LLM_MODEL
-  provider: OpenAI
-  openAI:
-    apiKeySecretRef: kagent-openai
-    apiKeySecretKey: OPENAI_API_KEY
-EOF
-elif [ "$LLM_PROVIDER" == "azureOpenAI" ]; then
-  cat << EOF | kubectl apply -f -
-apiVersion: kagent.dev/v1alpha1
-kind: ModelConfig
-metadata:
-  name: default-model-config
-  namespace: $KAGENT_NAMESPACE
-spec:
-  model: $LLM_MODEL
-  provider: AzureOpenAI
-  azureOpenAI:
-    apiKeySecretRef: kagent-azure-openai
-    apiKeySecretKey: AZUREOPENAI_API_KEY
-    apiVersion: "2023-05-15"
-    azureDeployment: "your-deployment-name"
-    azureEndpoint: "https://your-endpoint.openai.azure.com"
-EOF
-  echo -e "${YELLOW}Note: For Azure OpenAI, you may need to manually update the deployment name and endpoint in the ModelConfig${NC}"
-fi
 
-# 18. Deploy test pod for Ollama if using Ollama provider
-if [ "$LLM_PROVIDER" == "ollama" ]; then
-  OLLAMA_TEST_POD="04_ollama/ollama_test_pod.yaml"
-  echo -e "${BLUE}Deploying ollama test pod for connectivity test...${NC}"
-  kubectl apply -f "$OLLAMA_TEST_POD"
-  echo -e "${YELLOW}Waiting for ollama test pod to be ready...${NC}"
-  kubectl wait --namespace demo-app --for=condition=Ready pod/ollama-test --timeout=60s
+# 18. Deploy test pod for Ollama
+OLLAMA_TEST_POD="04_ollama/ollama_test_pod.yaml"
+echo -e "${BLUE}Deploying ollama test pod for connectivity test...${NC}"
+kubectl apply -f "$OLLAMA_TEST_POD"
+echo -e "${YELLOW}Waiting for ollama test pod to be ready...${NC}"
+kubectl wait --namespace demo-app --for=condition=Ready pod/ollama-test --timeout=60s
 
-  echo -e "${GREEN}Running test query to Ollama from inside the Kind cluster...${NC}"
-  kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d "{\"model\": \"$LLM_MODEL\", \"prompt\": \"What is the capital of Sweden?\"}" | jq -r 'select(.done==true) | .response'
-else
-  echo -e "${YELLOW}Skipping Ollama test pod deployment for $LLM_PROVIDER provider.${NC}"
-fi
+echo -e "${GREEN}Running test query to Ollama from inside the Kind cluster...${NC}"
+kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d "{\"model\": \"$LLM_MODEL\", \"prompt\": \"What is the capital of Sweden?\"}" | jq -r 'select(.done==true) | .response'
 
 # 19. Install ArgoCD
 echo -e "${BLUE}Creating ArgoCD namespace...${NC}"
@@ -368,13 +263,12 @@ echo -e "You can access Grafana at: ${YELLOW}http://localhost:31755/grafana (adm
 echo -e "You can access kagent at: ${YELLOW}http://localhost:8083/${NC}"
 echo -e "You can access ArgoCD at: ${YELLOW}http://localhost:8080/${NC}"
 echo -e "ArgoCD admin password is: ${YELLOW}${ARGOCD_PASS}${NC}"
-echo -e "\nCurrent LLM provider: ${YELLOW}${LLM_PROVIDER}${NC} with model: ${YELLOW}${LLM_MODEL}${NC}"
-echo -e "To switch providers or models, use:"
+echo -e "\nCurrent LLM provider: ${YELLOW}Ollama${NC} with model: ${YELLOW}llama3.1${NC}"
+echo -e "To switch to a different model, use:"
+echo -e "  ${YELLOW}./switch_model.sh <model_name>${NC}"
+echo -e "Example:"
+echo -e "  ${YELLOW}./switch_model.sh mistral:7b${NC}"
+echo -e "\nTo switch to a different provider, use:"
 echo -e "  ${YELLOW}./switch_provider.sh <provider> <model> [api_key]${NC}"
-echo -e "Examples:"
-echo -e "  ${YELLOW}./switch_provider.sh ollama llama3.1${NC}"
+echo -e "Example:"
 echo -e "  ${YELLOW}./switch_provider.sh anthropic claude-3-sonnet-20240229 <API_KEY>${NC}"
-echo -e "For Ollama models only, you can also use the simplified script:"
-echo -e "  ${YELLOW}./switch_model.sh llama3.1${NC} (Ollama models only)"
-echo -e "Or redeploy with a different provider:"
-echo -e "  ${YELLOW}LLM_PROVIDER=anthropic LLM_MODEL=claude-3-sonnet-20240229 ANTHROPIC_API_KEY=<API_KEY> ./deploy_all.sh${NC}"

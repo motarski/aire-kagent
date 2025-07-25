@@ -10,11 +10,11 @@ Larger models can cause:
 - Heavy swap usage
 - System slowdowns or instability
 
-If you need more powerful models, consider switching to a remote provider using `switch_provider.sh`.
+If you need more powerful models, consider adding Anthropic as a provider using `switch_provider.sh`.
 
 ## Prerequisites
 - MacBook
-- Docker for desktop installed (could with podman desktop as well - however it's not tested)
+- Docker for desktop installed (might work with podman desktop as well - however it's not been tested)
 - kubectl client installed
 - Helm installed
 - jq installed
@@ -24,7 +24,6 @@ If you need more powerful models, consider switching to a remote provider using 
 1. **Clone the repository**
 2. **Run the deployment script:**
 
-   Basic deployment with default **Ollama** provider and **llama3.1:8b** model:
    ```sh
    ./deploy_all.sh
    ```
@@ -34,10 +33,10 @@ This will:
    - Install Monitoring stack (Prometheus and Grafana)
    - Configure Grafana to use Prometheus as a data source
    - Expose Grafana via Ingress
-   - Install and configure the specified LLM provider (Ollama, Anthropic, OpenAI, or Azure OpenAI)
-   - Install kagent CRDs and kagent configured with the selected LLM provider
+   - Install and configure Ollama with the llama3.1 model
+   - Install kagent CRDs and kagent configured with Ollama
    - Grant kagent cluster-admin RBAC permissions
-   - Deploy a test pod to verify Ollama connectivity if using Ollama provider
+   - Deploy a test pod to verify Ollama connectivity
    - Install ArgoCD for GitOps management
    - Configure ArgoCD to connect to a public GitHub repository and deploy the demo app automatically
 
@@ -59,34 +58,18 @@ This will:
   - URL: [http://localhost:8080/](http://localhost:8080/)
   - Login: `admin` / (password is shown at the end of the deployment script)
 
-## Testing LLM Provider Connectivity
+## Testing LLM Connectivity
 
-### Ollama Provider
-When using the Ollama provider, you can verify connectivity from the Kind cluster:
+You can verify Ollama connectivity from the Kind cluster:
 
 ```sh
-# The current model will be automatically used in the test
-kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d '{"model": "YOUR_MODEL", "prompt": "What is the capital of Sweden?"}'
+kubectl exec -n demo-app ollama-test -- curl -s -X POST http://host.docker.internal:11434/api/generate -d '{"model": "llama3.1", "prompt": "What is the capital of Sweden?"}'
 ```
 You should see the final answer (e.g., `Stockholm`).
 
-### API-Based Providers (Anthropic, OpenAI, Azure)
-When using API-based providers, you can verify functionality through the kagent UI
-
 ## Switching between LLM Models and Providers
 
-The framework includes convenient scripts that allow you to quickly change the LLM models and providers used throughout the entire environment. You can deploy the entire environment with a specific provider by setting environment variables:
-
-```sh
-# For Ollama provider (default)
-LLM_PROVIDER=ollama LLM_MODEL=qwen3:8b ./deploy_all.sh
-
-# For Anthropic provider
-LLM_PROVIDER=anthropic LLM_MODEL=claude-3-sonnet-20240229 ANTHROPIC_API_KEY=your_api_key_here ./deploy_all.sh
-
-# For OpenAI provider
-LLM_PROVIDER=openAI LLM_MODEL=gpt-4.1-mini OPENAI_API_KEY=your_api_key_here ./deploy_all.sh
-```
+The framework includes convenient scripts that allow you to quickly change the LLM models and providers used throughout the entire environment after your initial deployment.
 
 ### Switching Ollama Models
 
@@ -101,37 +84,32 @@ For quick switching between different Ollama models in an existing deployment:
 ```
 
 The script will:
-1. Update all configuration files with the new model
+1. Update the Ollama configuration in values-ollama.yaml
 2. Pull the model if it's not already available locally
 3. Optionally update your running deployment if one exists
 4. Update all ModelConfig objects that use Ollama provider
 5. Verify the model switch by testing the model
 
-### Switching Between Different Providers
+### Adding Different Providers
 
-For switching between different providers in an existing deployment:
+After your initial deployment with Ollama, you can add Anthropic as a provider using the provider script:
 
 ```sh
+# First export your Anthropic API key
+export ANTHROPIC_API_KEY="your_api_key_here"
+
+# Add Anthropic Claude (requires API key)
+./switch_provider.sh anthropic claude-sonnet-4-20250514
+
 # Switch to Ollama with a specific model
 ./switch_provider.sh ollama llama3.1
-
-# Switch to Anthropic Claude (requires API key)
-./switch_provider.sh anthropic claude-3-sonnet-20240229 your_api_key_here
-
-# Switch to OpenAI (requires API key)
-./switch_provider.sh openAI gpt-4.1-mini your_api_key_here
-
-# Switch to Azure OpenAI (requires API key and additional configuration)
-./switch_provider.sh azureOpenAI deployment-model-name your_api_key_here
 ```
 
 **The provider switcher script supports:**
 1. Ollama (local models)
 2. Anthropic (Claude models)
-3. OpenAI (GPT models)
-4. Azure OpenAI (requires additional configuration)
 
-This comprehensive approach makes it easy to experiment with different models and providers without manually editing multiple files.
+The script adds the specified provider to your cluster, allowing you to use it alongside Ollama. You can select which provider/model to use for each agent via the kagent UI without changing the default configuration or restarting services.
 
 ## Cleanup
 To delete the environment:

@@ -14,7 +14,7 @@ NC='\033[0m'
 
 # Check if a model name was provided
 if [ "$#" -ne 1 ]; then
-    echo -e "${RED}Error: Please provide a model name.${NC}"
+    echo -e "Please provide a model to switch to."
     echo -e "Usage: ${YELLOW}./switch_model.sh <model_name>${NC}"
     echo -e "Example: ${YELLOW}./switch_model.sh llama3.1${NC}"
     echo -e "\nAvailable models:"
@@ -45,37 +45,11 @@ if [ ! -f "05_kagent/values-ollama.yaml" ]; then
     exit 1
 fi
 
-if [ ! -f "deploy_all.sh" ]; then
-    echo -e "${RED}Error: deploy_all.sh file not found!${NC}"
-    exit 1
-fi
-
-if [ ! -f "04_ollama/ollama_api_call.sh" ]; then
-    echo -e "${YELLOW}Warning: ollama_api_call.sh file not found. Skipping update.${NC}"
-else
-    # Check if ollama_api_call.sh has been updated to use parameters
-    if grep -q "MODEL=" 04_ollama/ollama_api_call.sh; then
-        echo -e "${BLUE}ollama_api_call.sh already uses parameters, no update needed.${NC}"
-    else
-        # Update ollama_api_call.sh - old format
-        echo -e "${BLUE}Updating ollama_api_call.sh...${NC}"
-        sed -i '' "s/\"model\": \".*\"/\"model\": \"$NEW_MODEL\"/" 04_ollama/ollama_api_call.sh
-    fi
-fi
+# No need to modify ollama_api_call.sh as it already uses parameters
 
 # Update values-ollama.yaml file
 echo -e "${BLUE}Updating values-ollama.yaml...${NC}"
 sed -i '' "s/model: \".*\"/model: \"$NEW_MODEL\"/" 05_kagent/values-ollama.yaml
-
-# Update deploy_all.sh
-echo -e "${BLUE}Updating deploy_all.sh...${NC}"
-sed -i '' "s/OLLAMA_MODEL=\".*\"/OLLAMA_MODEL=\"$NEW_MODEL\"  # Updated model/" deploy_all.sh
-# Check if the API call line exists in deploy_all.sh
-if grep -q "{\"model\":" deploy_all.sh; then
-    sed -i '' "s/{\"model\": \".*\", \"prompt\"/{\"model\": \"$NEW_MODEL\", \"prompt\"/" deploy_all.sh
-else
-    echo -e "${YELLOW}Warning: Could not find API call line in deploy_all.sh. Manual update may be required.${NC}"
-fi
 
 # Check if we should update the running deployment
 if kubectl get namespace "$KAGENT_NAMESPACE" &>/dev/null; then
@@ -154,8 +128,7 @@ if kubectl get namespace "$KAGENT_NAMESPACE" &>/dev/null; then
 else
     echo -e "${YELLOW}No running Kubernetes cluster with kagent detected.${NC}"
     echo -e "${GREEN}Configuration files updated successfully.${NC}"
-    echo -e "${BLUE}To deploy with the new model, run:${NC}"
-    echo -e "${YELLOW}./deploy_all.sh${NC}"
+    echo -e "${BLUE}To deploy a cluster with this model, first run deploy_all.sh to set up the environment, then run this script again to switch to this model.${NC}"
 fi
 
 # Verify model switch with a direct test if Ollama server is running
