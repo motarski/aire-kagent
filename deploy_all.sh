@@ -288,8 +288,6 @@ setup_argocd() {
 
 # Get ArgoCD password with retry logic
 get_argocd_password() {
-    log_warning "Retrieving ArgoCD admin password..."
-    
     local max_retries=5
     local retry_count=0
     local argocd_pass=""
@@ -299,48 +297,67 @@ get_argocd_password() {
             -o jsonpath='{.data.password}' 2>/dev/null | base64 --decode || echo "")
         
         if [[ -n "$argocd_pass" ]]; then
-            log_success "Successfully retrieved ArgoCD password."
             echo "$argocd_pass"
             return 0
         else
             ((retry_count++))
             if [[ $retry_count -lt $max_retries ]]; then
-                log_warning "Waiting for ArgoCD secret (attempt $retry_count of $max_retries)..."
                 sleep 10
             fi
         fi
     done
     
-    log_warning "Could not retrieve ArgoCD password after $max_retries attempts."
     echo "<password not available yet>"
 }
 
 # Setup port forwarding
 setup_port_forwarding() {
-    log_success "Setting up port forwarding..."
-    
-    # ArgoCD port forwarding
+    log_warning "Waiting for ArgoCD and Kagent pods to be ready..."
+    log_info "This might take a few minutes..."
+
+    # Add a short delay to allow pods to be created
+    sleep 20
+
+    # Wait for ArgoCD server with more resilient error handling
+    log_warning "Waiting for ArgoCD server..."
+    kubectl wait --namespace "$ARGOCD_NAMESPACE" --for=condition=Ready pod -l app.kubernetes.io/name=argocd-server --timeout=300s || {
+        log_warning "ArgoCD server pods not ready yet, continuing anyway..."
+        kubectl get pods -n "$ARGOCD_NAMESPACE" -l app.kubernetes.io/name=argocd-server
+    }
+
+    # Wait for Kagent with more resilient error handling
+    log_warning "Waiting for Kagent..."
+    kubectl wait --namespace "$KAGENT_NAMESPACE" --for=condition=Ready pod -l app.kubernetes.io/name=kagent --timeout=180s || {
+        log_warning "Kagent pods not ready yet, continuing anyway..." 
+        kubectl get pods -n "$KAGENT_NAMESPACE" -l app.kubernetes.io/name=kagent
+    }
+
+    log_success "Exposing services..."
+
+    # Setup port forwarding with better error handling
+    log_warning "Setting up port forwarding for ArgoCD..."
     kubectl port-forward svc/argocd-server -n "$ARGOCD_NAMESPACE" 8080:443 &>/dev/null &
-    local argocd_pid=$!
-    
-    # Kagent port forwarding
+    PORT_FORWARD_ARGOCD_PID=$!
+
+    log_warning "Setting up port forwarding for Kagent..."
     kubectl port-forward svc/kagent -n "$KAGENT_NAMESPACE" 8083:80 &>/dev/null &
-    local kagent_pid=$!
-    
+    PORT_FORWARD_KAGENT_PID=$!
+
+    # Give port-forwarding a moment to start
     sleep 2
-    
+
     # Check if port forwarding is working
-    if ps -p $argocd_pid > /dev/null; then
+    if ps -p $PORT_FORWARD_ARGOCD_PID > /dev/null; then
         log_success "ArgoCD port forwarding started successfully."
     else
-        log_warning "ArgoCD port forwarding failed. Run manually:"
+        log_warning "ArgoCD port forwarding may not have started. You can manually run:"
         log_info "kubectl port-forward svc/argocd-server -n \"$ARGOCD_NAMESPACE\" 8080:443"
     fi
-    
-    if ps -p $kagent_pid > /dev/null; then
+
+    if ps -p $PORT_FORWARD_KAGENT_PID > /dev/null; then
         log_success "Kagent port forwarding started successfully."
     else
-        log_warning "Kagent port forwarding failed. Run manually:"
+        log_warning "Kagent port forwarding may not have started. You can manually run:"
         log_info "kubectl port-forward svc/kagent -n \"$KAGENT_NAMESPACE\" 8083:80"
     fi
 }
